@@ -1,0 +1,8 @@
+[package]
+name = "drdb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rocksdb = "0.22.0"
+datafusion = "41.0.0"
