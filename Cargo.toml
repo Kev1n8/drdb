@@ -4,5 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rocksdb = "0.22.0"
+async-trait = "0.1.82"
+arrow = "52.0.0"
+arrow-schema = { version = "52.0.0", default-features = false }
 datafusion = "41.0.0"
+datafusion-catalog = "41.0.0"
+datafusion-common = "41.0.0"
+datafusion-expr = "41.0.0"
+datafusion-physical-plan = "41.0.0"
+datafusion-execution = "41.0.0"
+rocksdb = "0.22.0"
+thiserror = "1.0.63"
+tokio = "1.40.0"
+futures = "0.3.30"
