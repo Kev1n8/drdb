@@ -2,7 +2,7 @@
 
 This project is built for learning purposes and is not intended for production use.
 
-## Introduction 📋
+## 📋 Introduction
 
 **DRDB** ([Datafusion](https://github.com/apache/datafusion) + [RocksDB](https://github.com/rust-rocksdb/rust-rocksdb))  leverages DataFusion as its SQL engine and RocksDB as the storage backend.
 
@@ -10,11 +10,11 @@ The main goal of this project is to deepen my understanding of DataFusion and da
 
 Please note that this is a personal learning project, and as I'm still exploring, there may be mistakes or inefficiencies in the implementation. Any feedback or suggestions are welcome!
 
-## Recent Updates 📅
+## 📅 Recent Updates
 
 - 2024/09/15: Introduced an abstraction layer between RocksDB and DataFusion's `TableProvider`. Implemented basic `scan` and `insert_into` operations to enable reading and writing to RocksDB, currently supporting only `DataType::Utf8`. Currently ugly code.
 
-## Roadmap 👨‍💻
+## 👨‍💻 Roadmap
 
 This project is still in its early stages. Here’s what I plan to work on:
 
