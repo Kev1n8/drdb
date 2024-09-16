@@ -1,4 +1,4 @@
-use crate::data::db_table_scan::DBTableScanExec;
+use crate::physical_plan::db_table_scan::DBTableScanExec;
 use crate::db_datafusion_error;
 use crate::storage::serialize::{make_meta_key, make_meta_value, make_row_key};
 use arrow::array::{as_string_array, ArrayRef};
@@ -23,7 +23,7 @@ pub type Value = Vec<u8>;
 pub type KVTableRef = Arc<KVTable>;
 pub type KVTableMetaRef = Arc<KVTableMeta>;
 
-/// `KVTableMeta` contains the meta-data of a `KVTable`
+/// `KVTableMeta` contains the meta-physical_plan of a `KVTable`
 #[derive(Debug, Clone)]
 pub struct KVTableMeta {
     pub(crate) id: u64,
@@ -102,7 +102,7 @@ impl From<Vec<u8>> for KVTableMeta {
 }
 
 /// `KVTable` describes basic info of a table, and
-/// holds the src of the data
+/// holds the src of the physical_plan
 #[derive(Debug, Clone)]
 pub struct KVTable {
     pub db: Arc<DB>,
@@ -120,7 +120,7 @@ impl KVTable {
     }
 
     /// This method should be used when a `KVTable` is created for the first time
-    /// and with a batch of data given.
+    /// and with a batch of physical_plan given.
     pub async fn try_new(
         meta: &KVTableMetaRef,
         db: Arc<DB>,
@@ -146,7 +146,7 @@ impl KVTable {
         }
     }
 
-    pub(crate) async fn create_scan_physical_plan(
+    pub(crate) async fn create_physical_plan(
         &self,
         target_table: u64,
         _projections: Option<&Vec<usize>>,
@@ -177,7 +177,7 @@ impl TableProvider for KVTable {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        self.create_scan_physical_plan(self.table_id, projection, self.schema())
+        self.create_physical_plan(self.table_id, projection, self.schema())
             .await
     }
 
@@ -349,22 +349,22 @@ mod tests {
     }
 
     /// Create a `KVTable` with a single column and `insert into` it
-    /// by `values`, check if the data is inserted
+    /// by `values`, check if the physical_plan is inserted
     #[tokio::test]
     async fn test_db_write() -> Result<()> {
         // Create a new schema with one field called "a" of type Int32
         let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Utf8, false)]));
 
-        // Create a new batch of data to insert into the table
+        // Create a new batch of physical_plan to insert into the table
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![Arc::new(StringArray::from(vec!["hello", "world", "!"]))],
         )?;
-        // Run the experiment and obtain the resulting data in the table
+        // Run the experiment and obtain the resulting physical_plan in the table
         let resulting_data_in_table =
             experiment(schema, vec![vec![batch.clone()]], vec![vec![batch.clone()]])
                 .await?;
-        // Ensure that the table now contains two batches of data in the same partition
+        // Ensure that the table now contains two batches of physical_plan in the same partition
         for col in resulting_data_in_table.columns() {
             let arr = as_string_array(col);
             assert_eq!(
@@ -405,7 +405,7 @@ mod tests {
         // Create KV store
         let db = DB::open_default("tmp").unwrap();
         let db = Arc::new(db);
-        // Create and register the initial table with the provided schema and data
+        // Create and register the initial table with the provided schema and physical_plan
         let initial_table =
             Arc::new(KVTable::try_new(&dest_meta, Arc::clone(&db), initial_data).await?);
         session_ctx.register_table("Dest", initial_table.clone())?;
@@ -419,7 +419,7 @@ mod tests {
             .project(vec![Expr::Column("column1".into()).alias("a")])?
             .build()?;
 
-        // Create an insert plan to insert the source data into the initial table
+        // Create an insert plan to insert the source physical_plan into the initial table
         let insert_into_table =
             LogicalPlanBuilder::insert_into(values_plan, "Dest", &schema, false)?
                 .build()?;
