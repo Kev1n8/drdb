@@ -1,5 +1,5 @@
 use crate::data::db_table_scan::DBTableScanExec;
-use crate::errors::{db_error_to_datafusion_error, DBError, DBResult};
+use crate::db_datafusion_error;
 use crate::storage::serialize::{make_meta_key, make_meta_value, make_row_key};
 use arrow::array::{as_string_array, ArrayRef};
 use arrow::record_batch::RecordBatch;
@@ -23,11 +23,13 @@ pub type Value = Vec<u8>;
 pub type KVTableRef = Arc<KVTable>;
 pub type KVTableMetaRef = Arc<KVTableMeta>;
 
+/// `KVTableMeta` contains the meta-data of a `KVTable`
 #[derive(Debug, Clone)]
 pub struct KVTableMeta {
     pub(crate) id: u64,
     pub(crate) name: String,
     pub(crate) schema: SchemaRef,
+    // `highest` row_id used in table, auto-increments
     pub(crate) highest: u64,
 }
 
@@ -43,22 +45,8 @@ impl KVTableMeta {
 
 impl Display for KVTableMeta {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let schema_str = self
-            .schema
-            .fields
-            .iter()
-            .map(|c| c.name().clone())
-            .collect::<Vec<_>>()
-            .join("_");
-
-        let str = format!(
-            "t{}_{}_{}_c{}_{}",
-            self.id,
-            self.name.as_str(),
-            self.highest,
-            self.schema.fields.len(),
-            schema_str,
-        );
+        // Safety: `make_meta_value` actually produce Bytes using `format!`
+        let str = unsafe { String::from_utf8_unchecked(make_meta_value(self)) };
         write!(f, "{}", str)
     }
 }
@@ -105,6 +93,7 @@ impl From<String> for KVTableMeta {
     }
 }
 
+/// Only use this when the `value` is considered safe
 impl From<Vec<u8>> for KVTableMeta {
     fn from(value: Vec<u8>) -> Self {
         // Safety: value should be guaranteed in utf8
@@ -112,6 +101,8 @@ impl From<Vec<u8>> for KVTableMeta {
     }
 }
 
+/// `KVTable` describes basic info of a table, and
+/// holds the src of the data
 #[derive(Debug, Clone)]
 pub struct KVTable {
     pub db: Arc<DB>,
@@ -139,7 +130,7 @@ impl KVTable {
         let batch = data.first().unwrap().first().unwrap();
         let sink = KVTableSink::new(meta.id, &db);
         // Put the meta & rows into db first
-        sink.put_meta(meta).map_err(db_error_to_datafusion_error)?;
+        sink.put_meta(meta)?;
         sink.put_batch_into_db(batch).await?;
 
         Ok(Self::new(meta, db))
@@ -220,20 +211,16 @@ impl KVTableSink {
         }
     }
 
-    pub fn put_meta(&self, meta: &KVTableMetaRef) -> DBResult<()> {
+    pub fn put_meta(&self, meta: &KVTableMetaRef) -> Result<()> {
         let key = meta.make_key();
         let val = meta.make_value();
         match self.db.put(key, val) {
             Ok(()) => Ok(()),
-            Err(e) => Err(DBError::KvStorageInternalError(e.to_string())),
+            Err(e) => Err(db_datafusion_error!(e)),
         }
     }
 
-    fn update_highest(
-        &self,
-        old_meta: &KVTableMetaRef,
-        new_highest: u64,
-    ) -> DBResult<()> {
+    fn update_highest(&self, old_meta: &KVTableMetaRef, new_highest: u64) -> Result<()> {
         let new_meta = KVTableMeta {
             id: self.id,
             name: old_meta.name.clone(),
@@ -245,10 +232,10 @@ impl KVTableSink {
         let new_val = new_meta.make_value();
         self.db
             .put(meta_key, new_val)
-            .map_err(|e| DBError::KvStorageInternalError(e.to_string()))
+            .map_err(|e| db_datafusion_error!(e))
     }
 
-    fn put_array(&self, name: &str, arr: &ArrayRef, start: u64) -> DBResult<()> {
+    fn put_array(&self, name: &str, arr: &ArrayRef, start: u64) -> Result<()> {
         let mut counter = start;
 
         let arr = as_string_array(arr);
@@ -257,7 +244,7 @@ impl KVTableSink {
             match row {
                 Some(str) => match self.db.put(key, str.as_bytes()) {
                     Ok(_) => counter += 1,
-                    Err(e) => return Err(DBError::KvStorageInternalError(e.to_string())),
+                    Err(e) => return Err(db_datafusion_error!(e)),
                 },
                 None => todo!(),
             }
@@ -278,13 +265,11 @@ impl KVTableSink {
         for (index, arr) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
             let name = schema.fields[index].name();
-            self.put_array(name.as_str(), arr, start)
-                .map_err(db_error_to_datafusion_error)?;
+            self.put_array(name.as_str(), arr, start)?;
         }
         // Update the highest index
         row_added += batch.num_rows() as u64;
-        self.update_highest(&Arc::new(meta), row_added + start)
-            .map_err(db_error_to_datafusion_error)?;
+        self.update_highest(&Arc::new(meta), row_added + start)?;
         Ok(row_added)
     }
 }

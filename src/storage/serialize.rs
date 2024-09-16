@@ -6,7 +6,24 @@ pub fn make_meta_key(table_id: u64) -> Vec<u8> {
 }
 
 pub fn make_meta_value(meta: &KVTableMeta) -> Vec<u8> {
-    meta.to_string().into_bytes()
+    let schema_str = meta
+        .schema
+        .fields
+        .iter()
+        .map(|c| c.name().clone())
+        .collect::<Vec<_>>()
+        .join("_");
+
+    let str = format!(
+        "t{}_{}_{}_c{}_{}",
+        meta.id,
+        meta.name.as_str(),
+        meta.highest,
+        meta.schema.fields.len(),
+        schema_str,
+    );
+
+    str.into()
 }
 
 pub fn make_row_key(table_id: u64, name: &str, row: u64) -> Vec<u8> {

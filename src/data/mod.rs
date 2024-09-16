@@ -1,4 +1,3 @@
-
 pub(crate) mod db_table_scan;
 
 pub trait Serializable {

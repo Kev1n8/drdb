@@ -2,17 +2,17 @@ use arrow::record_batch::RecordBatch;
 use arrow_schema::SchemaRef;
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
 use datafusion_common::arrow::array::{ArrayRef, StringArray};
-use datafusion_common::{internal_err, Result};
+use datafusion_common::{arrow_datafusion_err, internal_err, Result};
+
+use datafusion_common::DataFusionError;
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
-    PlanProperties,
+    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, PlanProperties,
 };
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
-use crate::errors::arrow_error_to_datafusion_error;
 use crate::storage::kv::KVTable;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use rocksdb::{IteratorMode, DB};
@@ -127,7 +127,7 @@ impl ExecutionPlan for DBTableScanExec {
         let columns = self.read_columns();
         let schema = Arc::clone(&self.schema);
         let batch = RecordBatch::try_new(schema.clone() as SchemaRef, columns)
-            .map_err(arrow_error_to_datafusion_error);
+            .map_err(|e| arrow_datafusion_err!(e));
 
         let stream = futures::stream::iter(vec![batch]);
         Ok(Box::pin(RecordBatchStreamAdapter::new(
