@@ -16,7 +16,6 @@ pub enum DBError {
 
 pub type DBResult<T> = Result<T, DBError>;
 
-
 pub fn db_error_to_datafusion_error(err: DBError) -> DataFusionError {
     DataFusionError::Execution(err.to_string())
 }
@@ -28,4 +27,3 @@ pub fn arrow_error_to_db_error(err: ArrowError) -> DBError {
 pub fn arrow_error_to_datafusion_error(err: ArrowError) -> DataFusionError {
     DataFusionError::Execution(err.to_string())
 }
-

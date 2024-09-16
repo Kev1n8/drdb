@@ -1,19 +1,21 @@
+use arrow::record_batch::RecordBatch;
+use arrow_schema::SchemaRef;
+use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
+use datafusion_common::arrow::array::{ArrayRef, StringArray};
+use datafusion_common::{internal_err, Result};
+use datafusion_execution::{SendableRecordBatchStream, TaskContext};
+use datafusion_physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan,
+    PlanProperties,
+};
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use arrow::record_batch::RecordBatch;
-use arrow_schema::{ArrowError, SchemaRef};
-use datafusion::datasource::physical_plan::FileScanConfig;
-use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, Partitioning};
-use datafusion_execution::{SendableRecordBatchStream, TaskContext};
-use datafusion_physical_plan::{ExecutionPlan, PlanProperties, DisplayAs, DisplayFormatType, ExecutionPlanProperties, ExecutionMode};
-use datafusion_common::{DataFusionError, internal_err, Result};
-use datafusion_common::arrow::array::{ArrayRef, StringArray};
 
-use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
-use rocksdb::{DB, IteratorMode};
 use crate::errors::arrow_error_to_datafusion_error;
-use crate::storage::kv::{KVTable, KVTableRef};
+use crate::storage::kv::KVTable;
+use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
+use rocksdb::{IteratorMode, DB};
 
 #[derive(Debug)]
 pub struct DBTableScanExec {
@@ -34,9 +36,7 @@ impl DBTableScanExec {
         }
     }
 
-    fn compute_properties(
-        schema: SchemaRef,
-    ) -> PlanProperties {
+    fn compute_properties(schema: SchemaRef) -> PlanProperties {
         let eq_properties = EquivalenceProperties::new(schema);
         PlanProperties::new(
             eq_properties,
@@ -52,7 +52,10 @@ impl DBTableScanExec {
             let start_key = format!("t{}_c{}_r000001", self.id, col.name());
             let prefix = format!("t{}_c{}", self.id, col.name());
 
-            let mut iter = self.db.iterator(IteratorMode::From(start_key.as_bytes(), rocksdb::Direction::Forward));
+            let mut iter = self.db.iterator(IteratorMode::From(
+                start_key.as_bytes(),
+                rocksdb::Direction::Forward,
+            ));
             let mut values = Vec::new();
 
             while let Some(Ok((key, value))) = iter.next() {
@@ -102,11 +105,18 @@ impl ExecutionPlan for DBTableScanExec {
         vec![]
     }
 
-    fn with_new_children(self: Arc<Self>, _: Vec<Arc<dyn ExecutionPlan>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn with_new_children(
+        self: Arc<Self>,
+        _: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         Ok(self)
     }
 
-    fn execute(&self, partition: usize, _context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
+    fn execute(
+        &self,
+        partition: usize,
+        _context: Arc<TaskContext>,
+    ) -> Result<SendableRecordBatchStream> {
         // ValuesExec has a single output partition
         if 0 != partition {
             return internal_err!(
@@ -120,34 +130,38 @@ impl ExecutionPlan for DBTableScanExec {
             .map_err(arrow_error_to_datafusion_error);
 
         let stream = futures::stream::iter(vec![batch]);
-        Ok(Box::pin(RecordBatchStreamAdapter::new(schema as SchemaRef, Box::pin(stream))))
+        Ok(Box::pin(RecordBatchStreamAdapter::new(
+            schema as SchemaRef,
+            Box::pin(stream),
+        )))
     }
 }
 
 #[cfg(test)]
 mod test {
+    use super::*;
+    use crate::storage::kv::{KVTable, KVTableMeta};
     use arrow::array::as_string_array;
     use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;
     use rocksdb::DB;
-    use crate::storage::kv::{KVTableMeta, KVTable};
-    use super::*;
 
     #[tokio::test]
     async fn test_read_from_db() {
         let meta = Arc::new(KVTableMeta {
             id: 101,
             name: "a".to_string(),
-            schema: Arc::new(Schema::new(vec![
-                Field::new("hello", DataType::Utf8, false),
-            ])),
+            schema: Arc::new(Schema::new(vec![Field::new(
+                "hello",
+                DataType::Utf8,
+                false,
+            )])),
             highest: 0,
         });
 
         let key_prefix = "t101_chello_r";
-        let target = Arc::new(Schema::new(vec![
-            Field::new("hell", DataType::Utf8, false),
-        ]));
+        let target =
+            Arc::new(Schema::new(vec![Field::new("hell", DataType::Utf8, false)]));
 
         let db = DB::open_default("./tmp").unwrap();
         let src = KVTable::new(&meta, Arc::new(db));
@@ -168,18 +182,15 @@ mod test {
 
         let mut stream = output;
         while let Some(batch) = stream.next().await {
-            match batch {
-                Ok(batch) => {
-                    assert_eq!(batch.num_rows(), 100);
+            if let Ok(batch) = batch {
+                assert_eq!(batch.num_rows(), 100);
 
-                    let col = batch.columns();
-                    let col = col.get(0).unwrap();
-                    for (i, row) in as_string_array(col).iter().enumerate() {
-                        assert_eq!(row, Some(format!("{i}").as_str()))
-                        // println!("{i} {}", row.unwrap());
-                    }
+                let col = batch.columns();
+                let col = col.first().unwrap();
+                for (i, row) in as_string_array(col).iter().enumerate() {
+                    assert_eq!(row, Some(format!("{i}").as_str()))
+                    // println!("{i} {}", row.unwrap());
                 }
-                _ => {}
             }
         }
     }

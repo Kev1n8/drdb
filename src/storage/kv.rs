@@ -1,22 +1,22 @@
-use std::any::Any;
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
-use arrow::array::{ArrayRef, as_string_array};
+use crate::data::db_table_scan::DBTableScanExec;
+use crate::errors::{db_error_to_datafusion_error, DBError, DBResult};
+use crate::storage::serialize::{make_meta_key, make_meta_value, make_row_key};
+use arrow::array::{as_string_array, ArrayRef};
 use arrow::record_batch::RecordBatch;
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan};
-use rocksdb::DB;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{Expr, TableType};
 use datafusion_physical_plan::insert::{DataSink, DataSinkExec};
 use datafusion_physical_plan::metrics::MetricsSet;
-use futures::{StreamExt, TryFutureExt};
-use crate::errors::{DBResult, DBError, db_error_to_datafusion_error};
-use crate::data::DBTableScan::DBTableScanExec;
-use crate::storage::serialize::{make_meta_key, make_meta_value, make_row_key};
+use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan};
+use futures::StreamExt;
+use rocksdb::DB;
+use std::any::Any;
+use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 pub type Key = Vec<u8>;
 pub type Value = Vec<u8>;
@@ -40,7 +40,6 @@ impl KVTableMeta {
         make_meta_value(self)
     }
 }
-
 
 impl Display for KVTableMeta {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -70,16 +69,18 @@ impl From<&str> for KVTableMeta {
         let parts: Vec<&str> = value.split(&['_']).collect();
 
         // Extract and parse each part
-        let id = parts[0][1..].parse::<u64>().expect("Failed to parse id");  // Skipping 't' prefix
+        let id = parts[0][1..].parse::<u64>().expect("Failed to parse id"); // Skipping 't' prefix
         let name = parts[1].to_string();
         let highest = parts[2].parse::<u64>().expect("Failed to parse highest");
 
         // Extract and parse the number of fields in the schema
-        let num_fields_str = parts[3].trim_start_matches('c');  // Remove 'c' prefix
-        let num_fields = num_fields_str.parse::<usize>().expect("Failed to parse number of fields");
+        let num_fields_str = parts[3].trim_start_matches('c'); // Remove 'c' prefix
+        let _num_fields = num_fields_str
+            .parse::<usize>()
+            .expect("Failed to parse number of fields");
 
         // Extract schema field strings and reconstruct the schema
-        let schema_str = parts[4..].join("");  // Join the rest of the parts to get the schema string
+        let schema_str = parts[4..].join(""); // Join the rest of the parts to get the schema string
         let fields: Vec<Field> = schema_str
             .split('_')
             .map(|f| // tmp implementation
@@ -107,7 +108,7 @@ impl From<String> for KVTableMeta {
 impl From<Vec<u8>> for KVTableMeta {
     fn from(value: Vec<u8>) -> Self {
         // Safety: value should be guaranteed in utf8
-        Self::from(unsafe{ String::from_utf8_unchecked(value) })
+        Self::from(unsafe { String::from_utf8_unchecked(value) })
     }
 }
 
@@ -132,20 +133,19 @@ impl KVTable {
     pub async fn try_new(
         meta: &KVTableMetaRef,
         db: Arc<DB>,
-        data: Vec<Vec<RecordBatch>>
+        data: Vec<Vec<RecordBatch>>,
     ) -> Result<Self> {
         // Currently only support a single batch, no partition
-        let batch = data.get(0).unwrap().get(0).unwrap();
+        let batch = data.first().unwrap().first().unwrap();
         let sink = KVTableSink::new(meta.id, &db);
         // Put the meta & rows into db first
-        sink.put_meta(&meta).map_err(
-            db_error_to_datafusion_error
-        )?;
+        sink.put_meta(meta).map_err(db_error_to_datafusion_error)?;
         sink.put_batch_into_db(batch).await?;
 
-        Ok(Self::new(&meta, db))
+        Ok(Self::new(meta, db))
     }
 
+    #[allow(dead_code)]
     fn fetch_meta(&self) -> KVTableMeta {
         let key = format!("mt{}", self.table_id).into_bytes();
         if let Some(val) = self.db.get(key).unwrap() {
@@ -184,20 +184,17 @@ impl TableProvider for KVTable {
         _state: &dyn Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
-        _limit: Option<usize>
+        _limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        self.create_scan_physical_plan(
-            self.table_id,
-            projection,
-            self.schema()
-        ).await
+        self.create_scan_physical_plan(self.table_id, projection, self.schema())
+            .await
     }
 
     async fn insert_into(
         &self,
         _state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool
+        _overwrite: bool,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let sink = Arc::new(KVTableSink::new(self.table_id, &self.db));
         Ok(Arc::new(DataSinkExec::new(
@@ -228,11 +225,15 @@ impl KVTableSink {
         let val = meta.make_value();
         match self.db.put(key, val) {
             Ok(()) => Ok(()),
-            Err(e) => Err(DBError::KvStorageInternalError(e.to_string()))
+            Err(e) => Err(DBError::KvStorageInternalError(e.to_string())),
         }
     }
 
-    fn update_highest(&self, old_meta: &KVTableMetaRef, new_highest: u64) -> DBResult<()> {
+    fn update_highest(
+        &self,
+        old_meta: &KVTableMetaRef,
+        new_highest: u64,
+    ) -> DBResult<()> {
         let new_meta = KVTableMeta {
             id: self.id,
             name: old_meta.name.clone(),
@@ -242,57 +243,48 @@ impl KVTableSink {
 
         let meta_key = new_meta.make_key();
         let new_val = new_meta.make_value();
-        self.db.put(meta_key, new_val).map_err(|e|
-        DBError::KvStorageInternalError(e.to_string())
-        )
+        self.db
+            .put(meta_key, new_val)
+            .map_err(|e| DBError::KvStorageInternalError(e.to_string()))
     }
 
-    fn put_array(&self, name: &String, arr: &ArrayRef, start: u64) -> DBResult<()> {
+    fn put_array(&self, name: &str, arr: &ArrayRef, start: u64) -> DBResult<()> {
         let mut counter = start;
 
         let arr = as_string_array(arr);
         for row in arr {
             let key = make_row_key(self.id, name, counter + 1);
             match row {
-                Some(str) => {
-                    match self.db.put(key, str.as_bytes().to_vec()) {
-                        Ok(_) => counter += 1,
-                        Err(e) => return Err(DBError::KvStorageInternalError(e.to_string())),
-                    }
-                }
+                Some(str) => match self.db.put(key, str.as_bytes()) {
+                    Ok(_) => counter += 1,
+                    Err(e) => return Err(DBError::KvStorageInternalError(e.to_string())),
+                },
                 None => todo!(),
             }
         }
         Ok(())
     }
 
-    async fn put_batch_into_db(
-        &self,
-        batch: &RecordBatch,
-    ) -> Result<u64> {
+    async fn put_batch_into_db(&self, batch: &RecordBatch) -> Result<u64> {
         let mut row_added = 0u64;
         let meta_key = make_meta_key(self.id);
-        let meta_val = self.db.get(meta_key).map_err(|e|
-        DataFusionError::External(e.into())
-        )?.unwrap();
+        let meta_val = self
+            .db
+            .get(meta_key)
+            .map_err(|e| DataFusionError::External(e.into()))?
+            .unwrap();
         let meta = KVTableMeta::from(meta_val);
         let start = meta.highest;
-        for (index, arr) in batch
-            .columns()
-            .iter()
-            .enumerate()
-        {
+        for (index, arr) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
             let name = schema.fields[index].name();
-            self.put_array(name, arr, start).map_err(
-                db_error_to_datafusion_error
-            )?;
+            self.put_array(name.as_str(), arr, start)
+                .map_err(db_error_to_datafusion_error)?;
         }
         // Update the highest index
         row_added += batch.num_rows() as u64;
-        self.update_highest(&Arc::new(meta), row_added + start).map_err(
-            db_error_to_datafusion_error
-        )?;
+        self.update_highest(&Arc::new(meta), row_added + start)
+            .map_err(db_error_to_datafusion_error)?;
         Ok(row_added)
     }
 }
@@ -333,19 +325,15 @@ impl DataSink for KVTableSink {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use arrow::array::{AsArray, StringArray};
     use arrow::datatypes::UInt64Type;
     use arrow::record_batch::RecordBatch;
     use arrow_schema::Fields;
-    use datafusion::dataframe::DataFrame;
-    use datafusion::datasource::provider_as_source;
     use datafusion::prelude::SessionContext;
-    use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
+    use datafusion_common::{exec_datafusion_err, ScalarValue};
     use datafusion_expr::LogicalPlanBuilder;
     use datafusion_physical_plan::collect;
-    use datafusion_physical_plan::insert::DataSinkExec;
-    use futures::TryFutureExt;
-    use super::*;
 
     #[tokio::test]
     async fn test_meta_encode_decode() {
@@ -362,7 +350,12 @@ mod tests {
         let val = meta.make_value();
 
         assert_eq!(key, "mt1002".to_string().into_bytes());
-        assert_eq!(val, "t1002_TableTest_0_c2_column1_column2".to_string().into_bytes());
+        assert_eq!(
+            val,
+            "t1002_TableTest_0_c2_column1_column2"
+                .to_string()
+                .into_bytes()
+        );
 
         let decode = KVTableMeta::from(val);
         assert_eq!(meta.id, decode.id);
@@ -399,6 +392,8 @@ mod tests {
         Ok(())
     }
 
+    /// This function create a table with `initial_data` to insert `inserted_data` into and
+    /// return the final batch of the table.
     async fn experiment(
         schema: SchemaRef,
         initial_data: Vec<Vec<RecordBatch>>,
@@ -415,27 +410,20 @@ mod tests {
         let dest_meta = Arc::new(KVTableMeta {
             id: 1002,
             name: "Dest".to_string(),
-            schema: Arc::new(Schema::new(Fields::from(vec![
-                Field::new("a", DataType::Utf8, false),
-            ]))),
+            schema: Arc::new(Schema::new(Fields::from(vec![Field::new(
+                "a",
+                DataType::Utf8,
+                false,
+            )]))),
             highest: 0,
         });
         // Create KV store
         let db = DB::open_default("tmp").unwrap();
         let db = Arc::new(db);
         // Create and register the initial table with the provided schema and data
-        let initial_table = Arc::new(KVTable::try_new(&dest_meta, Arc::clone(&db), initial_data).await?);
+        let initial_table =
+            Arc::new(KVTable::try_new(&dest_meta, Arc::clone(&db), initial_data).await?);
         session_ctx.register_table("Dest", initial_table.clone())?;
-
-        // Create source table meta
-        let src_meta = KVTableMeta {
-            id: 1001,
-            name: "Src".to_string(),
-            schema: Arc::new(Schema::new(Fields::from(vec![
-                Field::new("a", DataType::Utf8, false),
-            ]))),
-            highest: 0,
-        };
 
         let exprs = vec![
             vec![Expr::Literal(ScalarValue::Utf8(Some("hello".to_string())))],
@@ -448,7 +436,8 @@ mod tests {
 
         // Create an insert plan to insert the source data into the initial table
         let insert_into_table =
-            LogicalPlanBuilder::insert_into(values_plan, "Dest", &schema, false)?.build()?;
+            LogicalPlanBuilder::insert_into(values_plan, "Dest", &schema, false)?
+                .build()?;
         // Create a physical plan from the insert plan
         let plan = session_ctx
             .state()
@@ -459,15 +448,19 @@ mod tests {
         let res = collect(plan, session_ctx.task_ctx()).await?;
         assert_eq!(extract_count(res), expected_count);
 
-        let target_schema = Arc::new(Schema::new(Fields::from(vec![
-            Field::new("a", DataType::Utf8, false),
-        ])));
+        let target_schema = Arc::new(Schema::new(Fields::from(vec![Field::new(
+            "a",
+            DataType::Utf8,
+            false,
+        )])));
         let exec = DBTableScanExec::new(1002, &target_schema, &initial_table);
         let mut stream = exec.execute(0, session_ctx.task_ctx())?;
         if let Some(batch) = stream.next().await.transpose()? {
             Ok(batch)
         } else {
-            Err(exec_datafusion_err!("unknown err when fetching batch from stream"))
+            Err(exec_datafusion_err!(
+                "unknown err when fetching batch from stream"
+            ))
         }
     }
 
