@@ -47,8 +47,13 @@ impl DBTableScanExec {
 
     fn read_columns(&self) -> Vec<ArrayRef> {
         let mut result: Vec<ArrayRef> = Vec::new();
+        let mut row_id_arr = Vec::new();
+        let mut store_id = true;
 
         for col in &self.schema.fields {
+            if col.name().eq("row_id") {
+                continue; // break
+            }
             let start_key = format!("t{}_c{}_r000001", self.id, col.name());
             let prefix = format!("t{}_c{}", self.id, col.name());
 
@@ -68,12 +73,28 @@ impl DBTableScanExec {
                     }
                     let value_str = String::from_utf8_unchecked(value.to_vec());
                     values.push(value_str);
+
+                    if store_id {
+                        let row_id_str = key_str
+                            .split('_')
+                            .last()
+                            .unwrap()
+                            .chars()
+                            .skip(1)
+                            .collect::<String>();
+                        row_id_arr.push(row_id_str);
+                    }
                 }
+            }
+            if store_id {
+                store_id = false;
             }
 
             let array: ArrayRef = Arc::new(StringArray::from(values));
             result.push(array);
         }
+        let id_arr = Arc::new(StringArray::from(row_id_arr));
+        result.push(id_arr);
         result
     }
 }
@@ -147,21 +168,22 @@ mod test {
     use rocksdb::DB;
 
     #[tokio::test]
-    async fn test_read_from_db() {
+    async fn test_read_from_db() -> Result<()> {
         let meta = Arc::new(KVTableMeta {
             id: 101,
             name: "a".to_string(),
-            schema: Arc::new(Schema::new(vec![Field::new(
-                "hello",
-                DataType::Utf8,
-                false,
-            )])),
+            schema: Arc::new(Schema::new(vec![
+                Field::new("hello", DataType::Utf8, false),
+                Field::new("row_id", DataType::Utf8, false),
+            ])),
             highest: 0,
         });
 
         let key_prefix = "t101_chello_r";
-        let target =
-            Arc::new(Schema::new(vec![Field::new("hell", DataType::Utf8, false)]));
+        let target = Arc::new(Schema::new(vec![
+            Field::new("hello", DataType::Utf8, false),
+            Field::new("row_id", DataType::Utf8, false),
+        ]));
 
         let db = DB::open_default("./tmp").unwrap();
         let src = KVTable::new(&meta, Arc::new(db));
@@ -176,22 +198,28 @@ mod test {
             Ok(out) => out,
             Err(_) => {
                 assert_eq!(9, 1);
-                return;
+                return Ok(());
             }
         };
 
         let mut stream = output;
-        while let Some(batch) = stream.next().await {
-            if let Ok(batch) = batch {
-                assert_eq!(batch.num_rows(), 100);
+        while let Some(batch) = stream.next().await.transpose()? {
+            assert_eq!(batch.num_rows(), 99);
 
-                let col = batch.columns();
-                let col = col.first().unwrap();
-                for (i, row) in as_string_array(col).iter().enumerate() {
-                    assert_eq!(row, Some(format!("{i}").as_str()))
-                    // println!("{i} {}", row.unwrap());
-                }
+            let cols = batch.columns();
+            // Assert data column
+            let col = cols.first().unwrap();
+            for (i, row) in as_string_array(col).iter().enumerate() {
+                assert_eq!(row, Some(format!("{}", i + 1).as_str()));
+                // println!("{i} {}", row.unwrap());
+            }
+            // Assert id column
+            let col = cols.last().unwrap();
+            for (i, row) in as_string_array(col).iter().enumerate() {
+                assert_eq!(row, Some(format!("{:0>6}", i + 1).as_str()));
+                // println!("{i} {}", row.unwrap());
             }
         }
+        Ok(())
     }
 }
