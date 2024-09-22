@@ -12,13 +12,16 @@ Please note that this is a personal learning project, and as I'm still exploring
 
 ## 📅 Recent Updates
 
+- 2024/09/22: Introduced a customized `DeleteExec` to perform delete operations on rocksdb, and a series of planners and rule to make datafusion replace the `DML::Delete` plan, which is not support, to `DeletePlanNode`.
+
 - 2024/09/15: Introduced an abstraction layer between RocksDB and DataFusion's `TableProvider`. Implemented basic `scan` and `insert_into` operations to enable reading and writing to RocksDB, currently supporting only `DataType::Utf8`. Currently ugly code.
 
 ## 👨‍💻 Roadmap
 
 This project is still in its early stages. Here’s what I plan to work on:
 
-- [ ] Implement a `serialization` layer for converting data between `RecordBatch` and `rocksdb::DB`.
-- [ ] Extend DataFusion’s DML capabilities to support SQL commands like `INSERT INTO` and `DELETE FROM`.
+- [x] Implement a `serialization` layer for converting data between `RecordBatch` and `rocksdb::DB`.
+- [x] Extend DataFusion’s DML capabilities to support SQL commands like `INSERT INTO` and `DELETE FROM`.
 - [ ] Extend DataFusion’s DDL to handle SQL commands like `CREATE TABLE` and `DROP TABLE`.
+- [ ] Support different `DataType`s, now only `DataType::Utf8`.
 - [ ] More...
