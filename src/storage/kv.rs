@@ -1,5 +1,5 @@
-use crate::physical_plan::db_table_scan::DBTableScanExec;
 use crate::db_datafusion_error;
+use crate::physical_plan::db_table_scan::DBTableScanExec;
 use crate::storage::serialize::{make_meta_key, make_meta_value, make_row_key};
 use arrow::array::{as_string_array, ArrayRef};
 use arrow::record_batch::RecordBatch;
@@ -265,6 +265,9 @@ impl KVTableSink {
         for (index, arr) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
             let name = schema.fields[index].name();
+            if name.eq("row_id") {
+                continue; // row_id is stored in the key potentially
+            }
             self.put_array(name.as_str(), arr, start)?;
         }
         // Update the highest index
@@ -353,25 +356,39 @@ mod tests {
     #[tokio::test]
     async fn test_db_write() -> Result<()> {
         // Create a new schema with one field called "a" of type Int32
-        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Utf8, false)]));
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Utf8, false),
+            Field::new("row_id", DataType::Utf8, false),
+        ]));
 
         // Create a new batch of physical_plan to insert into the table
         let batch = RecordBatch::try_new(
             schema.clone(),
-            vec![Arc::new(StringArray::from(vec!["hello", "world", "!"]))],
+            vec![
+                Arc::new(StringArray::from(vec!["hello", "world", "!"])),
+                Arc::new(StringArray::from(vec!["000001", "000002", "000003"])),
+            ],
         )?;
         // Run the experiment and obtain the resulting physical_plan in the table
         let resulting_data_in_table =
             experiment(schema, vec![vec![batch.clone()]], vec![vec![batch.clone()]])
                 .await?;
         // Ensure that the table now contains two batches of physical_plan in the same partition
-        for col in resulting_data_in_table.columns() {
-            let arr = as_string_array(col);
-            assert_eq!(
-                arr,
-                &StringArray::from(vec!["hello", "world", "!", "hello", "world", "!"]),
-            )
-        }
+        let col = resulting_data_in_table.columns().first().unwrap();
+        let arr = as_string_array(col);
+        assert_eq!(
+            arr,
+            &StringArray::from(vec!["hello", "world", "!", "hello", "world", "!"]),
+        );
+        // Ensure the `row_id`s are correct
+        let col = resulting_data_in_table.columns().last().unwrap();
+        let arr = as_string_array(col);
+        assert_eq!(
+            arr,
+            &StringArray::from(vec![
+                "000001", "000002", "000003", "000004", "000005", "000006"
+            ]),
+        );
 
         // todo: remove test table after this test
         Ok(())
@@ -395,15 +412,11 @@ mod tests {
         let dest_meta = Arc::new(KVTableMeta {
             id: 1002,
             name: "Dest".to_string(),
-            schema: Arc::new(Schema::new(Fields::from(vec![Field::new(
-                "a",
-                DataType::Utf8,
-                false,
-            )]))),
+            schema: Arc::clone(&schema),
             highest: 0,
         });
         // Create KV store
-        let db = DB::open_default("tmp").unwrap();
+        let db = DB::open_default("./tmp").unwrap();
         let db = Arc::new(db);
         // Create and register the initial table with the provided schema and physical_plan
         let initial_table =
@@ -411,12 +424,24 @@ mod tests {
         session_ctx.register_table("Dest", initial_table.clone())?;
 
         let exprs = vec![
-            vec![Expr::Literal(ScalarValue::Utf8(Some("hello".to_string())))],
-            vec![Expr::Literal(ScalarValue::Utf8(Some("world".to_string())))],
-            vec![Expr::Literal(ScalarValue::Utf8(Some("!".to_string())))],
+            vec![
+                Expr::Literal(ScalarValue::Utf8(Some("hello".to_string()))),
+                Expr::Literal(ScalarValue::Utf8(Some("001".to_string()))),
+            ], // these ids do not matter
+            vec![
+                Expr::Literal(ScalarValue::Utf8(Some("world".to_string()))),
+                Expr::Literal(ScalarValue::Utf8(Some("002".to_string()))),
+            ],
+            vec![
+                Expr::Literal(ScalarValue::Utf8(Some("!".to_string()))),
+                Expr::Literal(ScalarValue::Utf8(Some("003".to_string()))),
+            ],
         ];
         let values_plan = LogicalPlanBuilder::values(exprs)?
-            .project(vec![Expr::Column("column1".into()).alias("a")])?
+            .project(vec![
+                Expr::Column("column1".into()).alias("a"),
+                Expr::Column("column2".into()).alias("row_id"),
+            ])?
             .build()?;
 
         // Create an insert plan to insert the source physical_plan into the initial table
@@ -433,12 +458,7 @@ mod tests {
         let res = collect(plan, session_ctx.task_ctx()).await?;
         assert_eq!(extract_count(res), expected_count);
 
-        let target_schema = Arc::new(Schema::new(Fields::from(vec![Field::new(
-            "a",
-            DataType::Utf8,
-            false,
-        )])));
-        let exec = DBTableScanExec::new(1002, &target_schema, &initial_table);
+        let exec = DBTableScanExec::new(1002, &schema, &initial_table);
         let mut stream = exec.execute(0, session_ctx.task_ctx())?;
         if let Some(batch) = stream.next().await.transpose()? {
             Ok(batch)
