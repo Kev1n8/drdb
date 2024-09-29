@@ -13,7 +13,7 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
-use crate::storage::kv::KVTable;
+use crate::df_extension::table_provider::table_provider::KVTable;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use rocksdb::{IteratorMode, DB};
 
@@ -161,7 +161,7 @@ impl ExecutionPlan for DBTableScanExec {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::storage::kv::{KVTable, KVTableMeta};
+    use crate::df_extension::table_provider::table_provider::{KVTable, KVTableMeta};
     use arrow::array::as_string_array;
     use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;
@@ -185,7 +185,7 @@ mod test {
             Field::new("row_id", DataType::Utf8, false),
         ]));
 
-        let db = DB::open_default("./tmp").unwrap();
+        let db = DB::open_default("../../../../tmp").unwrap();
         let src = KVTable::new(&meta, Arc::new(db));
         for i in 0..100i32 {
             let key = format!("{key_prefix}{i:0>6}").into_bytes();

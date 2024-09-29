@@ -1,6 +1,7 @@
 use crate::db_datafusion_error;
-use crate::physical_plan::db_table_scan::DBTableScanExec;
-use crate::storage::serialize::{make_meta_key, make_meta_value, make_row_key};
+use crate::df_extension::exec::scan_exec::DBTableScanExec;
+use crate::df_extension::serialize::{make_meta_key, make_meta_value, make_row_key};
+use crate::df_extension::sink::kv::KVTableSink;
 use arrow::array::{as_string_array, ArrayRef};
 use arrow::record_batch::RecordBatch;
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
@@ -23,14 +24,14 @@ pub type Value = Vec<u8>;
 pub type KVTableRef = Arc<KVTable>;
 pub type KVTableMetaRef = Arc<KVTableMeta>;
 
-/// `KVTableMeta` contains the meta-physical_plan of a `KVTable`
+/// `KVTableMeta` contains the meta-df_extension of a `KVTable`
 #[derive(Debug, Clone)]
 pub struct KVTableMeta {
-    pub(crate) id: u64,
-    pub(crate) name: String,
-    pub(crate) schema: SchemaRef,
+    pub id: u64,
+    pub name: String,
+    pub schema: SchemaRef,
     // `highest` row_id used in table, auto-increments
-    pub(crate) highest: u64,
+    pub highest: u64,
 }
 
 impl KVTableMeta {
@@ -102,7 +103,7 @@ impl From<Vec<u8>> for KVTableMeta {
 }
 
 /// `KVTable` describes basic info of a table, and
-/// holds the src of the physical_plan
+/// holds the src of the df_extension
 #[derive(Debug, Clone)]
 pub struct KVTable {
     pub db: Arc<DB>,
@@ -120,7 +121,7 @@ impl KVTable {
     }
 
     /// This method should be used when a `KVTable` is created for the first time
-    /// and with a batch of physical_plan given.
+    /// and with a batch of df_extension given.
     pub async fn try_new(
         meta: &KVTableMetaRef,
         db: Arc<DB>,
@@ -146,7 +147,7 @@ impl KVTable {
         }
     }
 
-    pub(crate) async fn create_physical_plan(
+    pub async fn create_physical_plan(
         &self,
         target_table: u64,
         _projections: Option<&Vec<usize>>,
@@ -197,120 +198,6 @@ impl TableProvider for KVTable {
     }
 }
 
-#[derive(Debug)]
-pub struct KVTableSink {
-    id: u64,
-    db: Arc<DB>,
-}
-
-impl KVTableSink {
-    pub fn new(id: u64, src: &Arc<DB>) -> Self {
-        Self {
-            id,
-            db: Arc::clone(src),
-        }
-    }
-
-    pub fn put_meta(&self, meta: &KVTableMetaRef) -> Result<()> {
-        let key = meta.make_key();
-        let val = meta.make_value();
-        match self.db.put(key, val) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(db_datafusion_error!(e)),
-        }
-    }
-
-    fn update_highest(&self, old_meta: &KVTableMetaRef, new_highest: u64) -> Result<()> {
-        let new_meta = KVTableMeta {
-            id: self.id,
-            name: old_meta.name.clone(),
-            schema: old_meta.schema.clone(),
-            highest: new_highest,
-        };
-
-        let meta_key = new_meta.make_key();
-        let new_val = new_meta.make_value();
-        self.db
-            .put(meta_key, new_val)
-            .map_err(|e| db_datafusion_error!(e))
-    }
-
-    fn put_array(&self, name: &str, arr: &ArrayRef, start: u64) -> Result<()> {
-        let mut counter = start;
-
-        let arr = as_string_array(arr);
-        for row in arr {
-            let key = make_row_key(self.id, name, counter + 1);
-            match row {
-                Some(str) => match self.db.put(key, str.as_bytes()) {
-                    Ok(_) => counter += 1,
-                    Err(e) => return Err(db_datafusion_error!(e)),
-                },
-                None => todo!(),
-            }
-        }
-        Ok(())
-    }
-
-    async fn put_batch_into_db(&self, batch: &RecordBatch) -> Result<u64> {
-        let mut row_added = 0u64;
-        let meta_key = make_meta_key(self.id);
-        let meta_val = self
-            .db
-            .get(meta_key)
-            .map_err(|e| DataFusionError::External(e.into()))?
-            .unwrap();
-        let meta = KVTableMeta::from(meta_val);
-        let start = meta.highest;
-        for (index, arr) in batch.columns().iter().enumerate() {
-            let schema = batch.schema();
-            let name = schema.fields[index].name();
-            if name.eq("row_id") {
-                continue; // row_id is stored in the key potentially
-            }
-            self.put_array(name.as_str(), arr, start)?;
-        }
-        // Update the highest index
-        row_added += batch.num_rows() as u64;
-        self.update_highest(&Arc::new(meta), row_added + start)?;
-        Ok(row_added)
-    }
-}
-
-impl DisplayAs for KVTableSink {
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default | DisplayFormatType::Verbose => {
-                write!(f, "DBTableWrite(table_id={})", self.id)
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl DataSink for KVTableSink {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn metrics(&self) -> Option<MetricsSet> {
-        None
-    }
-
-    async fn write_all(
-        &self,
-        data: SendableRecordBatchStream,
-        _context: &Arc<TaskContext>,
-    ) -> Result<u64> {
-        let mut data = data;
-        let mut cnt = 0;
-        if let Some(batch) = data.next().await.transpose()? {
-            cnt = self.put_batch_into_db(&batch).await?;
-        }
-        Ok(cnt)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,7 +239,7 @@ mod tests {
     }
 
     /// Create a `KVTable` with a single column and `insert into` it
-    /// by `values`, check if the physical_plan is inserted
+    /// by `values`, check if the df_extension is inserted
     #[tokio::test]
     async fn test_db_write() -> Result<()> {
         // Create a new schema with one field called "a" of type Int32
@@ -361,7 +248,7 @@ mod tests {
             Field::new("row_id", DataType::Utf8, false),
         ]));
 
-        // Create a new batch of physical_plan to insert into the table
+        // Create a new batch of df_extension to insert into the table
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -369,11 +256,11 @@ mod tests {
                 Arc::new(StringArray::from(vec!["000001", "000002", "000003"])),
             ],
         )?;
-        // Run the experiment and obtain the resulting physical_plan in the table
+        // Run the experiment and obtain the resulting df_extension in the table
         let resulting_data_in_table =
             experiment(schema, vec![vec![batch.clone()]], vec![vec![batch.clone()]])
                 .await?;
-        // Ensure that the table now contains two batches of physical_plan in the same partition
+        // Ensure that the table now contains two batches of df_extension in the same partition
         let col = resulting_data_in_table.columns().first().unwrap();
         let arr = as_string_array(col);
         assert_eq!(
@@ -416,9 +303,9 @@ mod tests {
             highest: 0,
         });
         // Create KV store
-        let db = DB::open_default("./tmp").unwrap();
+        let db = DB::open_default("../../tmp").unwrap();
         let db = Arc::new(db);
-        // Create and register the initial table with the provided schema and physical_plan
+        // Create and register the initial table with the provided schema and df_extension
         let initial_table =
             Arc::new(KVTable::try_new(&dest_meta, Arc::clone(&db), initial_data).await?);
         session_ctx.register_table("Dest", initial_table.clone())?;
@@ -444,7 +331,7 @@ mod tests {
             ])?
             .build()?;
 
-        // Create an insert plan to insert the source physical_plan into the initial table
+        // Create an insert plan to insert the source df_extension into the initial table
         let insert_into_table =
             LogicalPlanBuilder::insert_into(values_plan, "Dest", &schema, false)?
                 .build()?;
