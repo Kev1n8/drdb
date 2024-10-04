@@ -12,6 +12,8 @@ Please note that this is a personal learning project, and as I'm still exploring
 
 ## 📅 Recent Updates
 
+- 2024/10/04: Set up the structure to be implemented to support `CREATE` and `DROP` SQLs.
+
 - 2024/09/22: Introduced a customized `DeleteExec` to perform delete operations on rocksdb, and a series of planners and rule to make datafusion replace the `DML::Delete` plan, which is not support, to `DeletePlanNode`.
 
 - 2024/09/15: Introduced an abstraction layer between RocksDB and DataFusion's `TableProvider`. Implemented basic `scan` and `insert_into` operations to enable reading and writing to RocksDB, currently supporting only `DataType::Utf8`. Currently ugly code.
