@@ -1,6 +1,6 @@
 use crate::db_datafusion_error;
+use crate::df_extension::provider::kvtable::{KVTableMeta, KVTableMetaRef};
 use crate::df_extension::serialize::{make_meta_key, make_row_key};
-use crate::df_extension::table_provider::table_provider::{KVTableMeta, KVTableMetaRef};
 use arrow::array::{as_string_array, ArrayRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;

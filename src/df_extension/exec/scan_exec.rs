@@ -13,7 +13,7 @@ use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
-use crate::df_extension::table_provider::table_provider::KVTable;
+use crate::df_extension::provider::kvtable::KVTable;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use rocksdb::{IteratorMode, DB};
 
@@ -161,7 +161,7 @@ impl ExecutionPlan for DBTableScanExec {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::df_extension::table_provider::table_provider::{KVTable, KVTableMeta};
+    use crate::df_extension::provider::kvtable::{KVTable, KVTableMeta};
     use arrow::array::as_string_array;
     use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;

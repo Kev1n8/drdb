@@ -1,4 +1,4 @@
-use crate::df_extension::table_provider::table_provider::KVTableMeta;
+use crate::df_extension::provider::kvtable::KVTableMeta;
 
 /// TODO: This file should contain the rules of making keys( of meta, row) value(of meta)
 

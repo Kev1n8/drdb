@@ -178,8 +178,8 @@ impl ExecutionPlan for DeleteExec {
 mod test {
     use super::*;
     use crate::df_extension::planner::query_planner::DeleteQueryPlanner;
+    use crate::df_extension::provider::kvtable::{KVTable, KVTableMeta};
     use crate::df_extension::rule::delete_rule::DeleteReplaceRule;
-    use crate::df_extension::table_provider::table_provider::{KVTable, KVTableMeta};
     use arrow::array::StringArray;
     use arrow::util::pretty::pretty_format_batches;
     use arrow_schema::{DataType, Field, Fields, Schema};
