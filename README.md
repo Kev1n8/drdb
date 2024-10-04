@@ -22,6 +22,7 @@ This project is still in its early stages. Here’s what I plan to work on:
 
 - [x] Implement a `serialization` layer for converting data between `RecordBatch` and `rocksdb::DB`.
 - [x] Extend DataFusion’s DML capabilities to support SQL commands like `INSERT INTO` and `DELETE FROM`.
-- [ ] Extend DataFusion’s DDL to handle SQL commands like `CREATE TABLE` and `DROP TABLE`.
+- [ ] Extend DataFusion’s Sql2Rel to handle SQL commands like `CREATE TABLE` and `DROP TABLE`.
 - [ ] Support different `DataType`s, now only `DataType::Utf8`.
+- [ ] Support `ALTER TABLE`.
 - [ ] More...
