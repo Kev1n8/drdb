@@ -4,16 +4,15 @@ use crate::df_extension::serialize::{make_meta_key, make_row_key};
 use arrow::array::{as_string_array, ArrayRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{DataFusionError, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_plan::insert::DataSink;
 use datafusion_physical_plan::metrics::MetricsSet;
-use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan};
+use datafusion_physical_plan::{DisplayAs, DisplayFormatType};
 use futures::StreamExt;
 use rocksdb::DB;
 use std::any::Any;
-use std::fmt::{Display, Formatter};
+use std::fmt::Formatter;
 use std::sync::Arc;
 
 #[derive(Debug)]

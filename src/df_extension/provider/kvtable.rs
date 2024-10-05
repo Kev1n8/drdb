@@ -1,19 +1,15 @@
-use crate::db_datafusion_error;
 use crate::df_extension::exec::scan_exec::DBTableScanExec;
-use crate::df_extension::serialize::{make_meta_key, make_meta_value, make_row_key};
+use crate::df_extension::serialize::{make_meta_key, make_meta_value};
 use crate::df_extension::sink::kv::KVTableSink;
-use arrow::array::{as_string_array, ArrayRef};
+use arrow::array::as_string_array;
 use arrow::record_batch::RecordBatch;
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_common::{DataFusionError, Result};
-use datafusion_execution::{SendableRecordBatchStream, TaskContext};
+use datafusion_common::Result;
 use datafusion_expr::{Expr, TableType};
-use datafusion_physical_plan::insert::{DataSink, DataSinkExec};
-use datafusion_physical_plan::metrics::MetricsSet;
-use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan};
-use futures::StreamExt;
+use datafusion_physical_plan::insert::DataSinkExec;
+use datafusion_physical_plan::ExecutionPlan;
 use rocksdb::DB;
 use std::any::Any;
 use std::fmt::{Display, Formatter};
@@ -209,6 +205,7 @@ mod tests {
     use datafusion_common::{exec_datafusion_err, ScalarValue};
     use datafusion_expr::LogicalPlanBuilder;
     use datafusion_physical_plan::collect;
+    use futures::StreamExt;
 
     #[tokio::test]
     async fn test_meta_encode_decode() {

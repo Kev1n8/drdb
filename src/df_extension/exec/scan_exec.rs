@@ -185,7 +185,7 @@ mod test {
             Field::new("row_id", DataType::Utf8, false),
         ]));
 
-        let db = DB::open_default("../../../../tmp").unwrap();
+        let db = DB::open_default("./tmp").unwrap();
         let src = KVTable::new(&meta, Arc::new(db));
         for i in 0..100i32 {
             let key = format!("{key_prefix}{i:0>6}").into_bytes();

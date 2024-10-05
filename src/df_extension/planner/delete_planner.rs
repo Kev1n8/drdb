@@ -1,6 +1,5 @@
 use crate::df_extension::exec::delete_exec::DeleteExec;
 use crate::df_extension::node::delete_node::DeletePlanNode;
-use arrow_schema::Schema;
 use async_trait::async_trait;
 use datafusion::execution::context::SessionState;
 use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
